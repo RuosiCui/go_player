@@ -43,21 +43,24 @@ class GoAI:
         self.time_limit = time_limit
 
     def get_best_move(self, engine):
-        # Opening Book Heuristic: MCTS struggles heavily with opening moves due to massive variance.
-        # We force the AI to play near the center for the first 2 moves of the game.
+        # Opening Book Heuristic: Restrict to 1-space radius around the four (3,3) star points
         empty_count = sum(row.count(0) for row in engine.board)
-        if empty_count >= (engine.size * engine.size) - 2:
-            center = engine.size // 2
-            valid_openings = []
-            # Only consider the inner 5x5 square for the opening moves
-            for r in range(center - 2, center + 3):
-                for c in range(center - 2, center + 3):
-                    if engine.board[r][c] == 0 and engine.is_legal_move(r, c):
-                        valid_openings.append((r, c))
-                        
+        if empty_count >= (engine.size * engine.size) - 1:
+            valid_openings = set()
+            # The four (3,3) "star points" on a 9x9 board in 0-indexed coordinates
+            star_points = [(2, 2), (2, 6), (6, 2), (6, 6)]
+            
+            for sr, sc in star_points:
+                # 1 extra space in all directions (3x3 grid around the center)
+                for r in range(sr - 1, sr + 2):
+                    for c in range(sc - 1, sc + 2):
+                        if 0 <= r < engine.size and 0 <= c < engine.size:
+                            if engine.board[r][c] == 0 and engine.is_legal_move(r, c):
+                                valid_openings.add((r, c))
+                                
             if valid_openings:
-                chosen = random.choice(valid_openings)
-                print(f"Opening Book triggered. Chosen move: {chosen}")
+                chosen = random.choice(list(valid_openings))
+                print(f"Opening Book triggered (Star Point Cluster). Chosen move: {chosen}")
                 return chosen
 
         # Instant Capture Override: If there is a free kill, take it instantly and skip MCTS.
