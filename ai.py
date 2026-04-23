@@ -38,9 +38,10 @@ class MCTSNode:
 
 
 class GoAI:
-    def __init__(self, time_limit=1.5):
-        # Allow 1.5 seconds per turn
+    def __init__(self, time_limit=1.5, iteration_cap=200000):
+        # Time limit serves as a stopwatch; iteration_cap serves as a goal tracker.
         self.time_limit = time_limit
+        self.iteration_cap = iteration_cap
 
     def get_best_move(self, engine):
         # Opening Book Heuristic: Restrict to 1-space radius around the four (3,3) star points
@@ -128,8 +129,8 @@ class GoAI:
         start_time = time.time()
         iterations = 0
         
-        # Add a cap on iterations just in case the CPU is extremely fast or fast-forwarding
-        while time.time() - start_time < self.time_limit and iterations < 200000:
+        # Keep simulating until either the time runs out, OR we reach our exact iteration goal
+        while time.time() - start_time < self.time_limit and iterations < self.iteration_cap:
             node = self.select(root)
             winner_val = self.simulate(node.snapshot)
             self.backpropagate(node, winner_val)
