@@ -92,6 +92,36 @@ class GoAI:
             print(f"Instant Capture Override! Slaughtered {max_capture_size} stones at {best_capture_move}")
             return best_capture_move
 
+        # Instant Escape Override: If our group is in Atari, try to save it!
+        # If multiple groups are in Atari, prioritize saving the largest one.
+        me = engine.current_player
+        best_escape_move = None
+        max_escape_size = 0
+        
+        checked_groups = set()
+        for r in range(engine.size):
+            for c in range(engine.size):
+                if engine.board[r][c] == me and (r, c) not in checked_groups:
+                    grp, libs = engine._get_group_and_liberties(engine.board, r, c)
+                    checked_groups.update(grp)
+                    
+                    if len(libs) == 1:
+                        # We are in Atari! Gather the only escape coordinate.
+                        lr, lc = list(libs)[0]
+                        if engine.is_legal_move(lr, lc):
+                            # Test if playing here actually gives us more liberties (avoiding 'ladders')
+                            test_board = [row[:] for row in engine.board]
+                            test_board[lr][lc] = me
+                            grp_after, libs_after = engine._get_group_and_liberties(test_board, lr, lc)
+                            if len(libs_after) > 1:
+                                if len(grp) > max_escape_size:
+                                    max_escape_size = len(grp)
+                                    best_escape_move = (lr, lc)
+                                    
+        if best_escape_move:
+            print(f"Instant Escape Override! Escaped with {max_escape_size} stones at {best_escape_move}")
+            return best_escape_move
+
         root_snapshot = engine._create_snapshot()
         root = MCTSNode(root_snapshot)
         
