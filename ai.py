@@ -60,6 +60,35 @@ class GoAI:
                 print(f"Opening Book triggered. Chosen move: {chosen}")
                 return chosen
 
+        # Instant Capture Override: If there is a free kill, take it instantly and skip MCTS.
+        # If there are multiple kills, prioritize the one that kills the MOST stones.
+        opponent = 2 if engine.current_player == 1 else 1
+        best_capture_move = None
+        max_capture_size = 0
+        
+        for r in range(engine.size):
+            for c in range(engine.size):
+                if engine.board[r][c] == 0:
+                    adjacents = engine._get_adjacent(r, c)
+                    has_opponent_adj = any(engine.board[ar][ac] == opponent for ar, ac in adjacents)
+                    
+                    if has_opponent_adj and engine.is_legal_move(r, c):
+                        current_capture_size = 0
+                        # Check how many stones this move would actually capture
+                        for ar, ac in adjacents:
+                            if engine.board[ar][ac] == opponent:
+                                grp, libs = engine._get_group_and_liberties(engine.board, ar, ac)
+                                if len(libs) == 1:
+                                    current_capture_size += len(grp)
+                                    
+                        if current_capture_size > max_capture_size:
+                            max_capture_size = current_capture_size
+                            best_capture_move = (r, c)
+                            
+        if best_capture_move:
+            print(f"Instant Capture Override! Slaughtered {max_capture_size} stones at {best_capture_move}")
+            return best_capture_move
+
         root_snapshot = engine._create_snapshot()
         root = MCTSNode(root_snapshot)
         
