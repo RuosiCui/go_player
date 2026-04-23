@@ -135,18 +135,6 @@ class GoAI:
             self.backpropagate(node, winner_val)
             iterations += 1
             
-            # Early Stopping Heuristic: If we are overwhelmingly mathematically confident, end the turn early!
-            if iterations % 200 == 0 and len(root.children) >= 2:
-                top_two = sorted(root.children, key=lambda c: c.visits, reverse=True)[:2]
-                top_visits = top_two[0].visits
-                second_visits = top_two[1].visits
-                
-                # If the AI has checked the #1 move 5 times more often than the #2 move,
-                # the math is fundamentally locked. We can stop early without waiting for the full 60 seconds!
-                if top_visits > (second_visits * 5) and top_visits > 50:
-                    print(f"Early Stopping! Overwhelming confidence reached at {iterations} iters. ({top_visits} vs {second_visits} visits).")
-                    break
-            
         if not root.children:
             return None # Fallback pass
             
