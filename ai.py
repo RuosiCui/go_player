@@ -138,9 +138,40 @@ class GoAI:
         if not root.children:
             return None # Fallback pass
             
-        # Select best move based on most visits (most robust)
-        best_child = max(root.children, key=lambda c: c.visits)
-        print(f"MCTS finished in {iterations} iterations. Chosen move: {best_child.move}. Win rate expectation: {best_child.wins/best_child.visits:.2f}")
+        # Select best move based on most visits, but FILTER OUT pure self-ataris!
+        sorted_children = sorted(root.children, key=lambda c: c.visits, reverse=True)
+        me = engine.current_player
+        
+        for child in sorted_children:
+            if child.move is None:
+                continue
+            r, c = child.move
+            
+            # Create a shallow engine copy for testing the actual board state of this move
+            test_eng = GoEngine()
+            test_eng.size = engine.size
+            test_eng.board = [row[:] for row in engine.board]
+            test_eng.current_player = engine.current_player
+            test_eng.history_set = set(engine.history_set)
+            test_eng.captures = dict(engine.captures)
+            
+            caps_before = test_eng.captures[me]
+            test_eng.place_stone(r, c)
+            caps_after = test_eng.captures[me]
+            
+            grp, libs = test_eng._get_group_and_liberties(test_eng.board, r, c)
+            
+            # If the move leaves us with 1 liberty AND it didn't capture/kill any opponent stones doing it
+            if len(libs) == 1 and caps_after == caps_before:
+                print(f"Anti-Self-Atari Guard activated! Rejected suicidal choice: {child.move}")
+                continue # Skip this move, keep going down the sorted list
+                
+            print(f"MCTS finished in {iterations} iterations. Chosen move: {child.move}. Win rate expectation: {child.wins/child.visits:.2f}")
+            return child.move
+            
+        # Fallback if somehow EVERYTHING was filtered
+        best_child = sorted_children[0]
+        print(f"MCTS finished in {iterations} iterations. Chosen move: {best_child.move} (Fallback).")
         return best_child.move
 
     def select(self, node):
