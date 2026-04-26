@@ -131,7 +131,7 @@ class GoEngine:
         queue = [(r, c)]
         
         while queue:
-            curr_r, curr_c = queue.pop(0)
+            curr_r, curr_c = queue.pop()
             if (curr_r, curr_c) in group:
                 continue
             group.add((curr_r, curr_c))
@@ -242,7 +242,7 @@ class GoEngine:
                     queue = [(r, c)]
                     
                     while queue:
-                        curr_r, curr_c = queue.pop(0)
+                        curr_r, curr_c = queue.pop()
                         if (curr_r, curr_c) in region:
                             continue
                         region.add((curr_r, curr_c))

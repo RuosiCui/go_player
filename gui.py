@@ -11,7 +11,7 @@ class GoGUI:
         
         self.size = size
         self.engine = GoEngine(size)
-        self.ai = GoAI(time_limit=15, iteration_cap=3000)
+        self.ai = GoAI(time_limit=15, iteration_cap=4000)
         
         self.cell_size = 50
         self.margin = 30
@@ -179,8 +179,20 @@ class GoGUI:
         self.root.after(400, lambda: self.canvas.delete(line1, line2))
 
     def undo_move(self):
-        if self.engine.undo():
-            self.draw_board()
+        if self.engine.is_game_over():
+            return
+            
+        mode = self.game_mode.get()
+        if mode == "Human vs Human":
+            if self.engine.undo():
+                self.draw_board()
+        elif mode in ["AI plays White", "AI plays Black"]:
+            # In AI vs Human, we must undo TWO moves (the AI's move, and your previous move)
+            # Otherwise, you undo the AI's move, it becomes the AI's turn again, and it instantly plays!
+            if len(self.engine.state_stack) >= 2:
+                self.engine.undo()
+                self.engine.undo()
+                self.draw_board()
 
     def on_mode_change(self, event):
         self.reset_game()

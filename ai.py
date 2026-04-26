@@ -90,24 +90,25 @@ class GoAI:
         return len(libs) == 1 and caps_after == caps_before
 
     def get_best_move(self, engine):
-        # Opening Book Heuristic: Restrict to 1-space radius around the four (3,3) star points
+        # Opening Book Heuristic: Play exclusively on the best 9x9 opening points
         empty_count = sum(row.count(0) for row in engine.board)
         if empty_count >= (engine.size * engine.size) - 1:
-            valid_openings = set()
-            # The four (3,3) "star points" on a 9x9 board in 0-indexed coordinates
-            star_points = [(2, 2), (2, 6), (6, 2), (6, 6)]
+            # The four (3,3) star points and their inner (3,4) & (4,3) variations
+            best_openings = [
+                (2, 2), (2, 3), (3, 2), # Top-Left cluster
+                (2, 6), (2, 5), (3, 6), # Top-Right cluster
+                (6, 2), (5, 2), (6, 3), # Bottom-Left cluster
+                (6, 6), (5, 6), (6, 5)  # Bottom-Right cluster
+            ]
+            valid_openings = []
             
-            for sr, sc in star_points:
-                # 1 extra space in all directions (3x3 grid around the center)
-                for r in range(sr - 1, sr + 2):
-                    for c in range(sc - 1, sc + 2):
-                        if 0 <= r < engine.size and 0 <= c < engine.size:
-                            if engine.board[r][c] == 0 and engine.is_legal_move(r, c):
-                                valid_openings.add((r, c))
+            for r, c in best_openings:
+                if engine.board[r][c] == 0 and engine.is_legal_move(r, c):
+                    valid_openings.append((r, c))
                                 
             if valid_openings:
-                chosen = random.choice(list(valid_openings))
-                print(f"Opening Book triggered (Star Point Cluster). Chosen move: {chosen}")
+                chosen = random.choice(valid_openings)
+                print(f"Opening Book triggered (13-Point Cluster). Chosen move: {chosen}")
                 return chosen
 
         # Instant Capture Override: If there is a free kill, take it instantly and skip MCTS.
@@ -135,7 +136,7 @@ class GoAI:
                             max_capture_size = current_capture_size
                             best_capture_move = (r, c)
                             
-        if best_capture_move:
+        if best_capture_move and max_capture_size >= 2:
             print(f"Instant Capture Override! Slaughtered {max_capture_size} stones at {best_capture_move}")
             return best_capture_move
 
@@ -305,13 +306,15 @@ class GoAI:
             chosen_move = None
             
             # 1. Fast scan for capture moves (Atari Capture Heuristic)
+            checked_opponent_stones = set()
             for r, c in empty_spots:
                 adjacents = eng._get_adjacent(r, c)
                 has_opponent_adj = any(eng.board[ar][ac] == opponent for ar, ac in adjacents)
                 if has_opponent_adj:
                     for ar, ac in adjacents:
-                        if eng.board[ar][ac] == opponent:
+                        if eng.board[ar][ac] == opponent and (ar, ac) not in checked_opponent_stones:
                             grp, libs = eng._get_group_and_liberties(eng.board, ar, ac)
+                            checked_opponent_stones.update(grp)
                             if len(libs) == 1:
                                 if eng.is_legal_move(r, c):
                                     chosen_move = (r, c)
