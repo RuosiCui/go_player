@@ -11,7 +11,7 @@ class GoGUI:
         
         self.size = size
         self.engine = GoEngine(size)
-        self.ai = GoAI(time_limit=40, iteration_cap=3000)
+        self.ai = GoAI(time_limit=15, iteration_cap=3000)
         
         self.cell_size = 50
         self.margin = 30

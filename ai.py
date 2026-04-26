@@ -295,45 +295,42 @@ class GoAI:
         
         # Play random moves but avoid filling own eyes so territory evaluates properly
         while not eng.game_over and depth < max_depth:
-            legal = []
-            capture_move = None
             opponent = 2 if eng.current_player == 1 else 1
             
-            for r in range(eng.size):
-                if capture_move: break
-                for c in range(eng.size):
-                    if capture_move: break
-                    if eng.board[r][c] == 0:
-                        
-                        # Heuristic: Do NOT play into our own true eyes
-                        adjacents = eng._get_adjacent(r, c)
-                        has_opponent_adj = any(eng.board[ar][ac] == opponent for ar, ac in adjacents)
-                                
-                        if self._is_true_eye(eng, r, c, eng.current_player):
-                            continue
-                            
-                        # Quick check logic for speed over perfect bounds
-                        if eng.is_legal_move(r, c):
-                            # Rule 1 Heuristic: Atari Capture. If this move kills an opponent, take it!
-                            if has_opponent_adj:
-                                for ar, ac in adjacents:
-                                    if eng.board[ar][ac] == opponent:
-                                        grp, libs = eng._get_group_and_liberties(eng.board, ar, ac)
-                                        # If the opponent group has 1 liberty left, this empty spot IS that liberty.
-                                        if len(libs) == 1:
-                                            capture_move = (r, c)
-                                            break
-                                            
-                            if not capture_move:
-                                legal.append((r, c))
+            # FAST SIMULATION OPTIMIZATION: 
+            # Instead of exhaustively testing all 81 spots to build a full list of legal moves,
+            # we shuffle empty spots and pick the FIRST legal one.
+            empty_spots = [(r, c) for r in range(eng.size) for c in range(eng.size) if eng.board[r][c] == 0]
+            random.shuffle(empty_spots)
+            chosen_move = None
             
-            if capture_move:
-                eng.place_stone(capture_move[0], capture_move[1])
-            elif not legal:
-                eng.pass_turn()
+            # 1. Fast scan for capture moves (Atari Capture Heuristic)
+            for r, c in empty_spots:
+                adjacents = eng._get_adjacent(r, c)
+                has_opponent_adj = any(eng.board[ar][ac] == opponent for ar, ac in adjacents)
+                if has_opponent_adj:
+                    for ar, ac in adjacents:
+                        if eng.board[ar][ac] == opponent:
+                            grp, libs = eng._get_group_and_liberties(eng.board, ar, ac)
+                            if len(libs) == 1:
+                                if eng.is_legal_move(r, c):
+                                    chosen_move = (r, c)
+                                    break
+                if chosen_move:
+                    break
+                    
+            # 2. If no capture, find the first random legal move that isn't a true eye
+            if not chosen_move:
+                for r, c in empty_spots:
+                    if not self._is_true_eye(eng, r, c, eng.current_player):
+                        if eng.is_legal_move(r, c):
+                            chosen_move = (r, c)
+                            break
+            
+            if chosen_move:
+                eng.place_stone(chosen_move[0], chosen_move[1])
             else:
-                move = random.choice(legal)
-                eng.place_stone(move[0], move[1])
+                eng.pass_turn()
             depth += 1
             
         scores, winner, b_stones, w_stones = eng.compute_score()
