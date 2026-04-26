@@ -43,6 +43,52 @@ class GoAI:
         self.time_limit = time_limit
         self.iteration_cap = iteration_cap
 
+    def _is_true_eye(self, engine, r, c, player):
+        # 1. Must be completely surrounded orthogonally
+        adjacents = engine._get_adjacent(r, c)
+        for ar, ac in adjacents:
+            if engine.board[ar][ac] != player:
+                return False
+                
+        # 2. Check diagonals for "false eye" status
+        diagonals = []
+        if r > 0 and c > 0: diagonals.append((r-1, c-1))
+        if r > 0 and c < engine.size - 1: diagonals.append((r-1, c+1))
+        if r < engine.size - 1 and c > 0: diagonals.append((r+1, c-1))
+        if r < engine.size - 1 and c < engine.size - 1: diagonals.append((r+1, c+1))
+        
+        opponent = 2 if player == 1 else 1
+        opponent_diagonals = 0
+        for dr, dc in diagonals:
+            if engine.board[dr][dc] == opponent:
+                opponent_diagonals += 1
+                
+        # If in the middle of the board (4 diagonals), 2 or more opponent stones means false eye.
+        # If on the edge/corner (2 or 1 diagonals), 1 or more opponent stones means false eye.
+        if len(diagonals) == 4:
+            if opponent_diagonals >= 2:
+                return False
+        else:
+            if opponent_diagonals >= 1:
+                return False
+                
+        return True
+
+    def _is_pure_self_atari(self, engine, r, c, player):
+        test_eng = GoEngine()
+        test_eng.size = engine.size
+        test_eng.board = [row[:] for row in engine.board]
+        test_eng.current_player = player
+        test_eng.history_set = set(engine.history_set)
+        test_eng.captures = dict(engine.captures)
+        
+        caps_before = test_eng.captures[player]
+        test_eng.place_stone(r, c)
+        caps_after = test_eng.captures[player]
+        
+        grp, libs = test_eng._get_group_and_liberties(test_eng.board, r, c)
+        return len(libs) == 1 and caps_after == caps_before
+
     def get_best_move(self, engine):
         # Opening Book Heuristic: Restrict to 1-space radius around the four (3,3) star points
         empty_count = sum(row.count(0) for row in engine.board)
@@ -123,8 +169,50 @@ class GoAI:
             print(f"Instant Escape Override! Escaped with {max_escape_size} stones at {best_escape_move}")
             return best_escape_move
 
+        # Game Over / Pass Override: If the only legal moves left are filling our own eyes, pass.
+        legal_moves = []
+        for r in range(engine.size):
+            for c in range(engine.size):
+                if engine.board[r][c] == 0 and engine.is_legal_move(r, c):
+                    legal_moves.append((r, c))
+                    
+        if not legal_moves:
+            return None # Pass
+            
+        all_moves_are_suicidal_or_eyes = True
+        for r, c in legal_moves:
+            if self._is_true_eye(engine, r, c, engine.current_player):
+                continue
+            if self._is_pure_self_atari(engine, r, c, engine.current_player):
+                continue
+            all_moves_are_suicidal_or_eyes = False
+            break
+                
+        if all_moves_are_suicidal_or_eyes:
+            print("Pass Override! All remaining legal moves are self-destructive (eyes or self-ataris).")
+            return None # Pass
+
         root_snapshot = engine._create_snapshot()
         root = MCTSNode(root_snapshot)
+        
+        # Early Game Edge Filter: Prevent exploring 1st-line (edge) moves during the first ~20 moves.
+        # (Tactical edge moves are already handled by the Instant Capture/Escape overrides above)
+        empty_count = sum(row.count(0) for row in engine.board)
+        if empty_count > (engine.size * engine.size) - 40:
+            filtered_untried = []
+            for move in root.untried_moves:
+                if move is None:
+                    filtered_untried.append(move)
+                else:
+                    r, c = move
+                    # Check if the move is on the very edge (first line)
+                    is_edge = (r == 0 or r == engine.size - 1 or c == 0 or c == engine.size - 1)
+                    if not is_edge:
+                        filtered_untried.append(move)
+            
+            # Only apply the filter if it leaves us with playable moves
+            if filtered_untried:
+                root.untried_moves = filtered_untried
         
         start_time = time.time()
         iterations = 0
@@ -148,22 +236,8 @@ class GoAI:
                 continue
             r, c = child.move
             
-            # Create a shallow engine copy for testing the actual board state of this move
-            test_eng = GoEngine()
-            test_eng.size = engine.size
-            test_eng.board = [row[:] for row in engine.board]
-            test_eng.current_player = engine.current_player
-            test_eng.history_set = set(engine.history_set)
-            test_eng.captures = dict(engine.captures)
-            
-            caps_before = test_eng.captures[me]
-            test_eng.place_stone(r, c)
-            caps_after = test_eng.captures[me]
-            
-            grp, libs = test_eng._get_group_and_liberties(test_eng.board, r, c)
-            
             # If the move leaves us with 1 liberty AND it didn't capture/kill any opponent stones doing it
-            if len(libs) == 1 and caps_after == caps_before:
+            if self._is_pure_self_atari(engine, r, c, me):
                 print(f"Anti-Self-Atari Guard activated! Rejected suicidal choice: {child.move}")
                 continue # Skip this move, keep going down the sorted list
                 
@@ -231,18 +305,11 @@ class GoAI:
                     if capture_move: break
                     if eng.board[r][c] == 0:
                         
-                        # Heuristic: Do NOT play into our own single-point eyes
+                        # Heuristic: Do NOT play into our own true eyes
                         adjacents = eng._get_adjacent(r, c)
-                        is_own_eye = True
-                        has_opponent_adj = False
-                        
-                        for ar, ac in adjacents:
-                            if eng.board[ar][ac] != eng.current_player:
-                                is_own_eye = False
-                            if eng.board[ar][ac] == opponent:
-                                has_opponent_adj = True
+                        has_opponent_adj = any(eng.board[ar][ac] == opponent for ar, ac in adjacents)
                                 
-                        if is_own_eye:
+                        if self._is_true_eye(eng, r, c, eng.current_player):
                             continue
                             
                         # Quick check logic for speed over perfect bounds
