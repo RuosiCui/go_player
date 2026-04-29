@@ -1,48 +1,89 @@
-# 9x9 Go Engine with MCTS Artificial Intelligence
+# 9x9 Go Engine with MCTS AI (Multi-Core)
 
-This is a fully-featured, GUI-based 9x9 Go Engine built entirely in standard Python. It features a custom-built Monte Carlo Tree Search (MCTS) Artificial Intelligence capable of playing either Black or White.
+A fully-featured, GUI-based 9x9 Go engine built entirely in standard Python. It features a custom Monte Carlo Tree Search (MCTS) AI enhanced with multi-core Root Parallelism, tactical override heuristics, and true eye detection.
 
 ## Prerequisites
 
-This application runs natively on pure Python and has **zero external dependencies**. No `pip install` commands are required! 
-It utilizes the `tkinter` graphics library, which comes pre-installed as a standard library in almost all Python distributions.
+This application runs on **pure Python** with **zero external dependencies**. No `pip install` is required. It uses only the Python standard library (`tkinter`, `multiprocessing`, `math`, `random`, `time`).
 
-*   **Python Version:** Python 3.7 or higher.
+- **Python Version:** Python 3.7 or higher
+
+> **Note:** `tkinter` comes pre-installed with most Python distributions. If you encounter a `ModuleNotFoundError` for `tkinter`, install it via your system package manager (e.g., `sudo apt-get install python3-tk` on Ubuntu/Debian).
 
 ## How to Run
 
-To launch the Go application, navigate to the folder containing the source files and run the main GUI script:
+Navigate to the project folder and run:
 
 ```bash
 python gui.py
 ```
-*(Depending on your system, you may need to use `python3 gui.py`)*
 
-## How to Play
+*(On some systems, use `python3 gui.py` instead.)*
 
-Upon launching the application, you will see the 9x9 Go board. 
-Black always plays the first move.
+## File Structure
 
-### 1. Selecting Game Modes
-In the top-left corner, use the dropdown menu to select your desired game mode:
-*   **Human vs Human:** Pass the mouse back and forth to play against a friend.
-*   **AI plays White:** Play as Black (you go first). The computer will automatically calculate and respond to your moves.
-*   **AI plays Black:** Play as White. The computer will immediately play the first move.
-*   **AI vs AI:** Watch the computer play a full game against itself.
+| File | Description |
+|------|-------------|
+| `engine.py` | Core Go rules engine — board state, legal move validation (including suicide and positional superko), stone placement, capture handling, undo/redo, and Chinese Area Scoring via flood-fill. |
+| `ai.py` | MCTS AI with UCB1 tree policy, multi-core Root Parallelism, and layered tactical heuristics (Opening Book, Instant Capture/Escape, True Eye Protection, Anti-Self-Atari Guard). |
+| `gui.py` | Tkinter-based graphical interface — interactive board rendering, click-to-place stones, game mode selection, score display, undo, and pass/concede. |
 
-**Note:** If you change the game mode mid-game, the board will automatically reset to a fresh game.
+## Game Modes
 
-### 2. Placing Stones
-Simply click anywhere on a grid intersection to place a stone. The engine will instantly mathematically verify your move.
-*   **Illegal Moves:** If you attempt to place a stone on an occupied space, trigger Positional Superko (repeating a past board state exactly), or commit Suicide (playing into a spot yielding 0 liberties without capturing), the engine will block your move and briefly flash a red **"X"** on the screen.
+Use the dropdown menu at the top of the window to select a mode:
 
-### 3. Ending the Game
-In this ruleset, you cannot arbitrarily "Pass" your turn to skip a move. 
-If you can no longer legally play anywhere on the board without committing suicide, or if you believe the game is structurally over, click the **Pass (Concede)** button at the top of the screen. 
+| Mode | Description |
+|------|-------------|
+| **Human vs Human** | Two players alternate clicking to place stones. |
+| **AI plays White** | Human plays Black, AI plays White. |
+| **AI plays Black** | AI plays Black, Human plays White. |
+| **AI vs AI** | Both sides are controlled by the AI. |
 
-This will instantly end the game. The engine will use a Flood-fill algorithm to calculate the final Chinese Area Score automatically (with a 2.5 Komi advantage already applied to White) and declare the winner!
+## Controls
 
-## Architecture Summary
-*   **`engine.py`**: The mathematical core. Contains the board state, superko hashes, liberty calculations, and area scoring.
-*   **`ai.py`**: The Artificial Intelligence. Runs Monte Carlo Tree Search with an Opening Book hook and UCB1 formulas.
-*   **`gui.py`**: The Tkinter graphical interface. Processes user clicks and safely handles AI asynchronous thinking loops.
+| Button | Action |
+|--------|--------|
+| **Pass (Concede)** | Ends the game immediately. Final scores are calculated and the winner is displayed. |
+| **Undo** | Reverts the last move. In AI modes, undoes both the AI's move and your previous move so it returns to your turn. |
+| **Reset** | Clears the board and starts a new game. |
+
+## Go Rules Implemented
+
+- **Board:** 9×9 grid, Black plays first
+- **Captures:** Groups with zero liberties are removed from the board
+- **Suicide Rule:** A move that leaves your own group with zero liberties (without capturing any opponent stones) is illegal
+- **Positional Superko:** Any board state that has previously occurred in the game is illegal to repeat
+- **Scoring:** Chinese Area Scoring (stones on board + surrounded territory). White receives 2.5 komi (compensation for playing second)
+- **Pass:** Passing concedes the game and triggers final scoring
+
+## AI Architecture
+
+The AI uses a multi-layered decision pipeline. Before each move, the following checks run in order:
+
+1. **Opening Book** — On the very first move, randomly selects from curated 3-3 and 3-4 star point positions.
+2. **Instant Capture Override** — If an opponent group of 2+ stones has only 1 liberty, capture it immediately without running MCTS.
+3. **Instant Escape Override** — If one of the AI's own groups is in atari, attempt to extend it (only if extending gains more than 1 liberty, to avoid ladder traps).
+4. **Pass Override** — If all remaining legal moves are true eyes or pure self-ataris, pass instead of self-destructing.
+5. **MCTS with Root Parallelism** — Spawns independent MCTS trees across all available CPU cores. Each core runs UCB1-guided tree search with smart rollouts (true eye protection + atari capture heuristic). Results are aggregated by merging visit/win counts across all cores.
+6. **Anti-Self-Atari Guard** — After MCTS selects the best move, a final safety check rejects any move that would place the AI into atari without capturing anything.
+
+## Configuration
+
+AI parameters are set in `gui.py` (line 14):
+
+```python
+self.ai = GoAI(time_limit=5, iteration_cap=10000)
+```
+
+| Parameter | Description |
+|-----------|-------------|
+| `time_limit` | Maximum seconds the AI is allowed to think per move. |
+| `iteration_cap` | Maximum total MCTS iterations across all cores. |
+
+The number of CPU cores used is auto-detected in `ai.py` (line 301):
+
+```python
+num_cores = max(1, min(16, multiprocessing.cpu_count() - 1))
+```
+
+This automatically uses all available cores minus one (reserved for the OS and GUI). To force a specific number, replace the expression with a constant (e.g., `num_cores = 4`).

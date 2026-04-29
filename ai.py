@@ -13,7 +13,7 @@ near-impossible due to the game's territorial complexity. MCTS bypasses both
 problems by statistically sampling thousands of random game completions and
 using their outcomes to guide the search tree. Root Parallelism multiplies the
 AI's thinking power by spawning independent MCTS trees across all available CPU
-cores and merging their statistical results, achieving ~10,000 iterations within
+cores and merging their statistical results, achieving ~7000 iterations within
 a 5-second time limit.
 
 b) Interesting Design Decisions & Challenges:
