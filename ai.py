@@ -81,7 +81,7 @@ def mcts_worker(args):
     empty_count = sum(row.count(0) for row in snapshot['board'])
     
     # Early Game Edge Filter
-    if empty_count > (board_size * board_size) - 10:
+    if empty_count > (board_size * board_size) - 30:
         filtered_untried = []
         for move in root.untried_moves:
             if move is None:
@@ -209,13 +209,25 @@ class GoAI:
         test_eng.current_player = player
         test_eng.history_set = set(engine.history_set)
         test_eng.captures = dict(engine.captures)
-        
+
         caps_before = test_eng.captures[player]
         test_eng.place_stone(r, c)
         caps_after = test_eng.captures[player]
-        
+
         grp, libs = test_eng._get_group_and_liberties(test_eng.board, r, c)
-        return len(libs) == 1 and caps_after == caps_before
+        if len(libs) != 1 or caps_after != caps_before:
+            return False
+
+        # Even with no capture, if this move puts any opponent group in atari
+        # it is a forcing move — not pure self-atari, so don't block it
+        opponent = 2 if player == 1 else 1
+        for adj_r, adj_c in test_eng._get_adjacent(r, c):
+            if test_eng.board[adj_r][adj_c] == opponent:
+                _, opp_libs = test_eng._get_group_and_liberties(test_eng.board, adj_r, adj_c)
+                if len(opp_libs) == 1:
+                    return False
+
+        return True
 
     def get_best_move(self, engine):
         # Opening Book Heuristic: Play exclusively on the best 9x9 opening points
