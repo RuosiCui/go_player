@@ -405,21 +405,20 @@ class GoAI:
         eng.current_player = snapshot['current_player']
         eng.history_set = set(snapshot['history_set'])
         eng.captures = dict(snapshot['captures'])
-        
+
         depth = 0
-        max_depth = 70 # Limit depth so simulation doesn't stall for too long
-        
-        # Play random moves but avoid filling own eyes so territory evaluates properly
+        max_depth = 50
+
+        # Build empty set once and update incrementally instead of rebuilding each turn
+        empty_set = {(r, c) for r in range(eng.size) for c in range(eng.size) if eng.board[r][c] == 0}
+
         while not eng.game_over and depth < max_depth:
             opponent = 2 if eng.current_player == 1 else 1
-            
-            # FAST SIMULATION OPTIMIZATION: 
-            # Instead of exhaustively testing all 81 spots to build a full list of legal moves,
-            # we shuffle empty spots and pick the FIRST legal one.
-            empty_spots = [(r, c) for r in range(eng.size) for c in range(eng.size) if eng.board[r][c] == 0]
+
+            empty_spots = list(empty_set)
             random.shuffle(empty_spots)
             chosen_move = None
-            
+
             # 1. Fast scan for capture moves (Atari Capture Heuristic)
             checked_opponent_stones = set()
             for r, c in empty_spots:
@@ -431,28 +430,30 @@ class GoAI:
                             grp, libs = eng._get_group_and_liberties(eng.board, ar, ac)
                             checked_opponent_stones.update(grp)
                             if len(libs) == 1:
-                                if eng.is_legal_move(r, c):
+                                if eng.is_legal_move_fast(r, c):
                                     chosen_move = (r, c)
                                     break
                 if chosen_move:
                     break
-                    
+
             # 2. If no capture, find the first random legal move that isn't a true eye
             if not chosen_move:
                 for r, c in empty_spots:
                     if not self._is_true_eye(eng, r, c, eng.current_player):
-                        if eng.is_legal_move(r, c):
+                        if eng.is_legal_move_fast(r, c):
                             chosen_move = (r, c)
                             break
-            
+
             if chosen_move:
-                eng.place_stone(chosen_move[0], chosen_move[1])
+                captured = eng._place_stone_sim(chosen_move[0], chosen_move[1])
+                empty_set.discard(chosen_move)
+                empty_set.update(captured)
             else:
                 eng.pass_turn()
             depth += 1
-            
+
         scores, winner, b_stones, w_stones = eng.compute_score()
-        
+
         if winner == "Black": return 1
         elif winner == "White": return 2
         return 0

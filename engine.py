@@ -138,6 +138,22 @@ class GoEngine:
             
         return True
 
+    def is_legal_move_fast(self, r, c):
+        """Legal move check without superko — for MCTS rollouts only."""
+        if self.board[r][c] != 0:
+            return False
+        sim_board = [row[:] for row in self.board]
+        sim_board[r][c] = self.current_player
+        opponent = self.get_opponent(self.current_player)
+        for adj_r, adj_c in self._get_adjacent(r, c):
+            if sim_board[adj_r][adj_c] == opponent:
+                grp, libs = self._get_group_and_liberties(sim_board, adj_r, adj_c)
+                if len(libs) == 0:
+                    for gr, gc in grp:
+                        sim_board[gr][gc] = 0
+        _, my_libs = self._get_group_and_liberties(sim_board, r, c)
+        return len(my_libs) > 0
+
     def place_stone(self, r, c):
         if not self.is_legal_move(r, c):
             return False
@@ -166,6 +182,21 @@ class GoEngine:
         # Switch turn
         self.current_player = self.get_opponent(self.current_player)
         return True
+
+    def _place_stone_sim(self, r, c):
+        """Place stone without saving undo snapshot — for MCTS rollouts only. Returns captured positions."""
+        opponent = self.get_opponent(self.current_player)
+        self.board[r][c] = self.current_player
+        captured = set()
+        for adj_r, adj_c in self._get_adjacent(r, c):
+            if self.board[adj_r][adj_c] == opponent:
+                grp, libs = self._get_group_and_liberties(self.board, adj_r, adj_c)
+                if len(libs) == 0:
+                    captured.update(grp)
+                    for grp_r, grp_c in grp:
+                        self.board[grp_r][grp_c] = 0
+        self.current_player = self.get_opponent(self.current_player)
+        return captured
 
     def compute_score(self):
         """Calculates Chinese area scoring using Flood Fill."""
