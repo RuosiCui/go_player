@@ -1,7 +1,110 @@
+"""
+Go Engine & AI Architecture Report
+==================================
+
+a) AI Strategy and Why We Chose It:
+We implemented Monte Carlo Tree Search (MCTS) with UCB1 (Upper Confidence Bound)
+for tree traversal, enhanced by multi-core Root Parallelism via Python's
+multiprocessing library. We chose MCTS because classic Minimax with Alpha-Beta
+pruning is impractical for Go: the branching factor on a 9x9 board (up to 81
+legal moves per turn) makes exhaustive search computationally infeasible, and
+writing an accurate static evaluation function for unfinished Go positions is
+near-impossible due to the game's territorial complexity. MCTS bypasses both
+problems by statistically sampling thousands of random game completions and
+using their outcomes to guide the search tree. Root Parallelism multiplies the
+AI's thinking power by spawning independent MCTS trees across all available CPU
+cores and merging their statistical results, achieving ~10,000 iterations within
+a 5-second time limit.
+
+b) Interesting Design Decisions & Challenges:
+- Separation of Concerns: We strictly decoupled logic into engine.py (Go rules
+  and scoring), ai.py (MCTS + heuristics), and gui.py (Tkinter visual layer).
+  This allows MCTS to run thousands of headless board simulations without
+  blocking the GUI thread.
+- Rollout Quality vs Speed: Purely random MCTS rollouts produced poor results
+  because simulated players would fill their own eyes, destroying territory and
+  corrupting the win/loss statistics. We solved this by injecting two smart
+  heuristics into the simulation loop: (1) True Eye Protection, which uses both
+  orthogonal and diagonal checks to prevent filling genuine eyes, and (2) an
+  Atari Capture heuristic that prioritizes capturing opponent groups with only
+  one liberty remaining. To maintain speed, we optimized the rollout loop with a
+  "First Valid Random" shuffle-scan approach instead of generating full move
+  lists, and added a checked_opponent_stones cache to eliminate redundant
+  flood-fill computations during the capture scan.
+- Tactical Override System: Before invoking MCTS, the AI runs a layered series
+  of instant overrides: Opening Book (curated 3-3 and 3-4 star point openings),
+  Instant Capture (kills groups of 2+ stones immediately), Instant Escape
+  (saves own groups in atari if extending gains liberties), and Pass Override
+  (ends the game when only self-destructive moves remain). These ensure the AI
+  never misses critical tactical moments regardless of MCTS sampling variance.
+- Anti-Self-Atari Guard: After MCTS selects its best move, a final safety check
+  rejects any move that would place the AI's own group into atari without
+  capturing anything, preventing late-game blunders.
+
+c) Testing Methodology Beyond Provided Suites:
+1. Positional Superko Verification: We manually forced classic repeating
+   snapback loops in "Human vs Human" mode and verified that the engine's
+   history_set hash correctly blocked illegal board state repetitions.
+2. AI Trap Testing: We set up board positions where a tempting capture move
+   actually led to a massive territory loss on the following turn. With
+   sufficient iterations, we verified the MCTS correctly identified the
+   statistical trap and chose solid structural moves instead.
+3. True Eye vs False Eye Validation: We constructed board positions with both
+   genuine single-point eyes and false eyes (enemy diagonal infiltration) to
+   confirm the AI correctly fills false eyes during rollouts while protecting
+   true eyes, producing accurate territory evaluation.
+4. Scoring Edge Cases: We tested the Chinese Area Scoring flood-fill on highly
+   fragmented boards with scattered, unconnected stones, verifying that
+   contested empty regions (touching both Black and White) correctly evaluated
+   to 0 points for both players.
+5. Multi-Core Consistency: We compared move selections between single-core and
+   multi-core runs on identical board positions to verify that Root Parallelism
+   aggregation produces statistically consistent move choices.
+"""
+
 import random
 import time
 import math
+import multiprocessing
 from engine import GoEngine
+
+def mcts_worker(args):
+    snapshot, time_limit, iteration_cap = args
+    ai = GoAI(time_limit=time_limit, iteration_cap=iteration_cap)
+    root = MCTSNode(snapshot)
+    
+    board_size = len(snapshot['board'])
+    empty_count = sum(row.count(0) for row in snapshot['board'])
+    
+    # Early Game Edge Filter
+    if empty_count > (board_size * board_size) - 10:
+        filtered_untried = []
+        for move in root.untried_moves:
+            if move is None:
+                filtered_untried.append(move)
+            else:
+                r, c = move
+                is_edge = (r == 0 or r == board_size - 1 or c == 0 or c == board_size - 1)
+                if not is_edge:
+                    filtered_untried.append(move)
+        
+        if filtered_untried:
+            root.untried_moves = filtered_untried
+
+    start_time = time.time()
+    iterations = 0
+    
+    while time.time() - start_time < time_limit and iterations < iteration_cap:
+        node = ai.select(root)
+        winner_val = ai.simulate(node.snapshot)
+        ai.backpropagate(node, winner_val)
+        iterations += 1
+        
+    results = {}
+    for child in root.children:
+        results[child.move] = (child.visits, child.wins)
+        
+    return results, iterations
 
 class MCTSNode:
     def __init__(self, snapshot, move=None, parent=None):
@@ -29,12 +132,33 @@ class MCTSNode:
         for r in range(eng.size):
             for c in range(eng.size):
                 if eng.board[r][c] == 0 and eng.is_legal_move(r, c):
+                    # Filter out true eyes — never let MCTS consider filling our own eyes
+                    if self._is_true_eye_fast(eng, r, c, eng.current_player):
+                        continue
                     legal.append((r, c))
                     
         # In MCTS, we represent a pass as None
         if not legal:
             legal.append(None)
         return legal
+
+    def _is_true_eye_fast(self, eng, r, c, player):
+        """Quick true eye check for filtering MCTS legal moves."""
+        # 1. All orthogonal neighbors must be our color
+        for ar, ac in eng._get_adjacent(r, c):
+            if eng.board[ar][ac] != player:
+                return False
+        # 2. Check diagonals
+        opponent = 2 if player == 1 else 1
+        diagonals = []
+        if r > 0 and c > 0: diagonals.append((r-1, c-1))
+        if r > 0 and c < eng.size - 1: diagonals.append((r-1, c+1))
+        if r < eng.size - 1 and c > 0: diagonals.append((r+1, c-1))
+        if r < eng.size - 1 and c < eng.size - 1: diagonals.append((r+1, c+1))
+        enemy_count = sum(1 for dr, dc in diagonals if eng.board[dr][dc] == opponent)
+        if len(diagonals) == 4:
+            return enemy_count < 2
+        return enemy_count < 1
 
 
 class GoAI:
@@ -194,61 +318,52 @@ class GoAI:
             return None # Pass
 
         root_snapshot = engine._create_snapshot()
-        root = MCTSNode(root_snapshot)
+        # Launch Root Parallelism across multiple CPU cores
+        num_cores = max(1, min(16, multiprocessing.cpu_count() - 1)) # Leave 1 core for OS/GUI
+        worker_args = (root_snapshot, self.time_limit, self.iteration_cap // num_cores)
         
-        # Early Game Edge Filter: Prevent exploring 1st-line (edge) moves during the first ~20 moves.
-        # (Tactical edge moves are already handled by the Instant Capture/Escape overrides above)
-        empty_count = sum(row.count(0) for row in engine.board)
-        if empty_count > (engine.size * engine.size) - 40:
-            filtered_untried = []
-            for move in root.untried_moves:
-                if move is None:
-                    filtered_untried.append(move)
-                else:
-                    r, c = move
-                    # Check if the move is on the very edge (first line)
-                    is_edge = (r == 0 or r == engine.size - 1 or c == 0 or c == engine.size - 1)
-                    if not is_edge:
-                        filtered_untried.append(move)
+        with multiprocessing.Pool(processes=num_cores) as pool:
+            worker_results = pool.map(mcts_worker, [worker_args] * num_cores)
             
-            # Only apply the filter if it leaves us with playable moves
-            if filtered_untried:
-                root.untried_moves = filtered_untried
+        # Aggregate results from all cores
+        aggregated_visits = {}
+        aggregated_wins = {}
+        total_iterations = 0
         
-        start_time = time.time()
-        iterations = 0
-        
-        # Keep simulating until either the time runs out, OR we reach our exact iteration goal
-        while time.time() - start_time < self.time_limit and iterations < self.iteration_cap:
-            node = self.select(root)
-            winner_val = self.simulate(node.snapshot)
-            self.backpropagate(node, winner_val)
-            iterations += 1
+        for child_results, iters in worker_results:
+            total_iterations += iters
+            for move, (visits, wins) in child_results.items():
+                if move not in aggregated_visits:
+                    aggregated_visits[move] = 0
+                    aggregated_wins[move] = 0
+                aggregated_visits[move] += visits
+                aggregated_wins[move] += wins
+                
+        if not aggregated_visits:
+            return None # Pass
             
-        if not root.children:
-            return None # Fallback pass
-            
-        # Select best move based on most visits, but FILTER OUT pure self-ataris!
-        sorted_children = sorted(root.children, key=lambda c: c.visits, reverse=True)
+        # Select best move based on aggregated visits, FILTERING OUT pure self-ataris
+        sorted_moves = sorted(aggregated_visits.keys(), key=lambda m: aggregated_visits[m], reverse=True)
         me = engine.current_player
         
-        for child in sorted_children:
-            if child.move is None:
+        for move in sorted_moves:
+            if move is None:
                 continue
-            r, c = child.move
+            r, c = move
             
             # If the move leaves us with 1 liberty AND it didn't capture/kill any opponent stones doing it
             if self._is_pure_self_atari(engine, r, c, me):
-                print(f"Anti-Self-Atari Guard activated! Rejected suicidal choice: {child.move}")
-                continue # Skip this move, keep going down the sorted list
+                print(f"Anti-Self-Atari Guard activated! Rejected suicidal choice: {move}")
+                continue # Skip this move
                 
-            print(f"MCTS finished in {iterations} iterations. Chosen move: {child.move}. Win rate expectation: {child.wins/child.visits:.2f}")
-            return child.move
+            win_rate = aggregated_wins[move] / aggregated_visits[move] if aggregated_visits[move] > 0 else 0
+            print(f"MCTS finished in {total_iterations} iterations across {num_cores} cores. Chosen move: {move}. Win rate expectation: {win_rate:.2f}")
+            return move
             
         # Fallback if somehow EVERYTHING was filtered
-        best_child = sorted_children[0]
-        print(f"MCTS finished in {iterations} iterations. Chosen move: {best_child.move} (Fallback).")
-        return best_child.move
+        best_move = sorted_moves[0]
+        print(f"MCTS finished in {total_iterations} iterations across {num_cores} cores. Chosen move: {best_move} (Fallback).")
+        return best_move
 
     def select(self, node):
         while not node.snapshot['game_over']:
@@ -292,7 +407,7 @@ class GoAI:
         eng.captures = dict(snapshot['captures'])
         
         depth = 0
-        max_depth = 40 # Limit depth so simulation doesn't stall for too long
+        max_depth = 70 # Limit depth so simulation doesn't stall for too long
         
         # Play random moves but avoid filling own eyes so territory evaluates properly
         while not eng.game_over and depth < max_depth:
