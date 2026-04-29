@@ -225,7 +225,7 @@ class GoGUI:
             
         move = self.ai.get_best_move(self.engine)
         if move is None or move == "PASS":
-            self.engine.pass_turn()
+            self.engine.ai_skip_turn()  # Skip turn only; game ends if both sides pass consecutively
         else:
             self.engine.place_stone(move[0], move[1])
             

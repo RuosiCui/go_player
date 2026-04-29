@@ -13,6 +13,7 @@ class GoEngine:
         self.winner = None
         self.final_scores = {1: 0, 2: 2.5} # White gets 2.5 komi
         self.state_stack = []
+        self.consecutive_passes = 0
 
     def _create_snapshot(self):
         return {
@@ -23,7 +24,8 @@ class GoEngine:
             'captures': dict(self.captures),
             'last_move': self.last_move,
             'winner': self.winner,
-            'final_scores': dict(self.final_scores)
+            'final_scores': dict(self.final_scores),
+            'consecutive_passes': self.consecutive_passes
         }
 
     def undo(self):
@@ -39,6 +41,7 @@ class GoEngine:
         self.last_move = state['last_move']
         self.winner = state['winner']
         self.final_scores = state['final_scores']
+        self.consecutive_passes = state['consecutive_passes']
         return True
 
     def _board_to_tuple(self, board):
@@ -178,10 +181,20 @@ class GoEngine:
         self.captures[self.current_player] += captured_this_turn
         self.history_set.add(self._board_to_tuple(self.board))
         self.last_move = (r, c)
-        
+        self.consecutive_passes = 0
+
         # Switch turn
         self.current_player = self.get_opponent(self.current_player)
         return True
+
+    def ai_skip_turn(self):
+        """AI passes its turn without ending the game. Ends game only if both sides pass consecutively."""
+        self.state_stack.append(self._create_snapshot())
+        self.consecutive_passes += 1
+        self.current_player = self.get_opponent(self.current_player)
+        if self.consecutive_passes >= 2:
+            self.game_over = True
+            self.compute_score()
 
     def _place_stone_sim(self, r, c):
         """Place stone without saving undo snapshot — for MCTS rollouts only. Returns captured positions."""
