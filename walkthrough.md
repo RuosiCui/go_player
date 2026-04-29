@@ -86,6 +86,14 @@ This is the **core rules engine**. It runs 4 checks in sequence:
 ### Key Algorithm — Flood Fill for Groups & Liberties
 > **File:** `engine.py` → [Lines 76–98](file:///c:/Users/crs02/go%20player/engine.py#L76-L98)
 
+### Simulation-Only Fast Variants
+> **File:** `engine.py` → [Lines 141–199](file:///c:/Users/crs02/go%20player/engine.py#L141-L199)
+
+Two lightweight methods exist solely for use inside MCTS rollouts — never for real game moves:
+
+- **`is_legal_move_fast` (Lines 141–155):** Same as `is_legal_move` but skips the superko hash step (no `_board_to_tuple` call, no `history_set` lookup). Superko violations during random rollouts are statistically negligible, so paying the O(81) hash cost per legal move test is pure waste in simulation.
+- **`_place_stone_sim` (Lines 186–199):** Same as `place_stone` but skips `state_stack.append(_create_snapshot())`. Since rollouts never need undo, the full board deep-copy that snapshot creates was being done up to 50× per rollout across millions of iterations. Returns the set of captured positions so the caller can update the incremental empty set.
+
 ```python
 def _get_group_and_liberties(self, board, r, c):
 ```
@@ -264,22 +272,26 @@ Starting from the root, repeatedly pick the child with the highest **UCB1 score*
 - Create a new `MCTSNode` child and attach it to the tree
 
 #### 3. SIMULATE — Random rollout to game end
-> **Lines 401–458** (`simulate`)
+> **Lines 401–459** (`simulate`)
 
 This is the **most performance-critical function** — it runs tens of thousands of times.
 
 ```
-For up to 70 moves:
-   1. Try to find a capture move (Atari Capture Heuristic)      → Lines 423–438
-   2. If no capture, find first random legal non-eye move        → Lines 441–446
-   3. If no move found at all, pass                              → Line 451
+For up to 50 moves:
+   1. Try to find a capture move (Atari Capture Heuristic)      → Lines 422–437
+   2. If no capture, find first random legal non-eye move        → Lines 439–445
+   3. If no move found at all, pass                              → Line 452
 ```
 
 Key optimizations:
-- **Lines 419–420:** "First Valid Random" — shuffle empty spots, pick the FIRST legal one (avoids building a full list)
-- **Lines 424–432:** `checked_opponent_stones` cache — once a group is flood-filled, all its stones are remembered. If another empty spot touches the same group, skip the flood-fill entirely.
-- **Line 443:** True Eye Protection — never fill your own eyes during rollouts (preserves territory accuracy)
-- **Line 454:** After the rollout ends, compute the final score and return the winner
+- **Line 413:** Incremental empty set — built once before the loop, updated on each place (`discard`) and capture (`update`) instead of scanning all 81 squares every turn
+- **Lines 418–419:** Convert set to list and shuffle each turn — O(n) where n shrinks as stones fill the board
+- **Lines 422–431:** `checked_opponent_stones` cache — once a group is flood-filled, all its stones are remembered. If another empty spot touches the same group, skip the flood-fill entirely.
+- **Line 433:** `is_legal_move_fast` — skips superko hash construction (safe in rollouts; violations are statistically negligible)
+- **Line 442:** True Eye Protection — never fill your own eyes during rollouts (preserves territory accuracy)
+- **Line 448:** `_place_stone_sim` — places stone and handles captures without pushing an undo snapshot to `state_stack`, eliminating a full board deep-copy per simulated move
+- **Lines 449–450:** Empty set updated with placed position discarded and any captured positions added back
+- **Line 455:** After the rollout ends, compute the final score and return the winner
 
 #### 4. BACKPROPAGATE — Update statistics up the tree
 > **Lines 460–467** (`backpropagate`)
@@ -299,7 +311,7 @@ Walk from the leaf node back up to the root. At each node, increment `visits` by
 ## Phase 6: Scoring
 
 ### Chinese Area Scoring
-> **File:** `engine.py` → [Lines 170–227](file:///c:/Users/crs02/go%20player/engine.py#L170-L227)
+> **File:** `engine.py` → [Lines 201–258](file:///c:/Users/crs02/go%20player/engine.py#L201-L258)
 
 1. **Lines 176–181:** Count all Black and White stones on the board
 2. **Lines 188–215:** Flood-fill every contiguous empty region:

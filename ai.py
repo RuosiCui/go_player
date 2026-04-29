@@ -27,10 +27,14 @@ b) Interesting Design Decisions & Challenges:
   heuristics into the simulation loop: (1) True Eye Protection, which uses both
   orthogonal and diagonal checks to prevent filling genuine eyes, and (2) an
   Atari Capture heuristic that prioritizes capturing opponent groups with only
-  one liberty remaining. To maintain speed, we optimized the rollout loop with a
-  "First Valid Random" shuffle-scan approach instead of generating full move
-  lists, and added a checked_opponent_stones cache to eliminate redundant
-  flood-fill computations during the capture scan.
+  one liberty remaining. To maintain speed, we applied four optimizations to
+  the rollout loop: (a) a "First Valid Random" shuffle-scan approach instead of
+  generating full move lists, (b) a checked_opponent_stones cache to eliminate
+  redundant flood-fill computations during the capture scan, (c) an incremental
+  empty-position set updated on each place/capture instead of rebuilding it
+  every turn, and (d) _place_stone_sim and is_legal_move_fast variants that skip
+  undo-snapshot creation and superko hashing respectively, since neither is
+  needed inside rollouts. Rollout depth is capped at 50 moves.
 - Tactical Override System: Before invoking MCTS, the AI runs a layered series
   of instant overrides: Opening Book (curated 3-3 and 3-4 star point openings),
   Instant Capture (kills groups of 2+ stones immediately), Instant Escape
