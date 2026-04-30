@@ -60,12 +60,109 @@ Use the dropdown menu at the top of the window to select a mode:
 
 The AI uses a multi-layered decision pipeline. Before each move, the following checks run in order:
 
-1. **Opening Book** — On the very first move, randomly selects from curated 3-3 and 3-4 star point positions.
+1. **Opening Book** — On the very first move, randomly selects from the 4 classic 3-3 star points (hoshi).
 2. **Instant Capture Override** — If an opponent group of 2+ stones has only 1 liberty, capture it immediately without running MCTS.
-3. **Instant Escape Override** — If one of the AI's own groups is in atari, attempt to extend it (only if extending gains more than 1 liberty, to avoid ladder traps).
-4. **Pass Override** — If all remaining legal moves are true eyes or pure self-ataris, pass instead of self-destructing. A move that leaves the AI's own group at 1 liberty is still allowed if it simultaneously puts an opponent group in atari (forcing move, not a blunder).
+3. **Instant Escape Override** — If one of the AI's own groups larger than `MIN_ESCAPE_GROUP_SIZE` stones is in atari, attempt to extend it (only if extending gains more than 1 liberty, to avoid ladder traps). Smaller groups are left to MCTS to evaluate — sacrificing them is sometimes correct.
+4. **Pass Override** — If all remaining legal moves are true eyes or pure self-ataris, pass instead of self-destructing. Uses two separate helpers: `_is_pure_self_atari()` (strictly: 1 liberty + no capture) and `_is_forcing_move()` (move puts an opponent group in atari). A self-atari move is still allowed if it is a forcing move, so the AI never passes past capturable dead groups.
 5. **MCTS with Root Parallelism** — Spawns independent MCTS trees across all available CPU cores. Each core runs UCB1-guided tree search with smart rollouts (true eye protection + atari capture heuristic). Results are aggregated by merging visit/win counts across all cores. Edge move policy priors (virtual visit counts) are injected on node creation to bias UCB1 against weak 1st- and 2nd-line plays without hard-banning them; completely isolated 1st-line moves are hard-filtered before search begins.
-6. **Anti-Self-Atari Guard** — After MCTS selects the best move, a final safety check rejects any move that would place the AI into atari without capturing anything.
+6. **Anti-Self-Atari Guard** — After MCTS selects the best move, a final safety check rejects any move that would place the AI into atari without capturing anything. No forcing move exception applies here — the opponent always moves next and recaptures before the AI can benefit.
+
+                          ┌─────────────────────────┐
+                          │   get_best_move(engine) │
+                          └────────────┬────────────┘
+                                       │
+                          ┌────────────▼────────────┐
+                          │  LAYER 1: Opening Book  │
+                          │   First move of game?   │
+                          └──────┬──────────┬───────┘
+                              Yes│          │No
+                     ┌───────────▼──┐       │
+                     │ Return 3-3 / │       │
+                     │  3-4 point   │       │
+                     └──────────────┘       │
+                          ┌─────────────────▼────────────────┐
+                          │     LAYER 2: Instant Capture     │
+                          │  Opponent group at 1 lib, >=2 st?│
+                          └──────┬───────────────┬───────────┘
+                              Yes│               │No
+                     ┌───────────▼──┐            │
+                     │ Return capture│           │
+                     │  (largest grp)│           │
+                     └──────────────┘            │
+                          ┌──────────────────────▼───────────┐
+                          │     LAYER 3: Instant Escape      │
+                          │       Own group in atari?        │
+                          └──────┬───────────────┬───────────┘
+                              Yes│               │No
+                ┌────────────────▼────────────┐  │
+                │ Extending gains >1 liberty? │  │
+                └────┬───────────────┬────────┘  │
+                  Yes│            No │           │
+           ┌─────────▼───┐  (ladder) │           │
+           │Return escape│           │           │
+           │(largest grp)│           │           │
+           └─────────────┘           │           │
+                          ┌─────────▼────────────▼───────────┐
+                          │      LAYER 4: Pass Override      │
+                          │  All moves true eyes/self-atari? │
+                          └──────┬───────────────┬───────────┘
+                              Yes│               │No
+                     ┌───────────▼──┐            │
+                     │  Return None │            │
+                     │  (AI passes) │            │
+                     └──────────────┘            │
+                          ┌──────────────────────▼───────────┐
+                          │       LAYER 5: MCTS              │
+                          │  Snapshot engine, spawn N workers│
+                          └──────────────┬───────────────────┘
+                                         │
+                 ┌───────────────────────▼─────────────────────────┐
+                 │            EACH WORKER  (runs in parallel)      │
+                 │                                                 │
+                 │  1. Hard-filter isolated 1st-line moves         │
+                 │                                                 │
+                 │  ┌─────────────────────────────────────────┐    │
+                 │  │            MCTS LOOP                    │    │
+                 │  │                                         │    │
+                 │  │  SELECT ──► pick child with best UCB1   │    │
+                 │  │    │        wins/visits                 │    │
+                 │  │    │      + 1.41 * sqrt(logN / n)       │    │
+                 │  │    │                                    │    │
+                 │  │  EXPAND ──► pick untried move           │    │
+                 │  │    │        inject policy priors:       │    │
+                 │  │    │        1st-line: 6 visits / 0 wins │    │
+                 │  │    │        2nd-line: 6 visits / 1 win  │    │
+                 │  │    │        interior: no prior          │    │
+                 │  │    │                                    │    │
+                 │  │  SIMULATE ──► random rollout (max 50)   │    │
+                 │  │    │          atari capture heuristic   │    │
+                 │  │    │          true eye protection       │    │
+                 │  │    │          is_legal_move_fast        │    │
+                 │  │    │          _place_stone_sim          │    │
+                 │  │    │          incremental empty set     │    │
+                 │  │    │                                    │    │
+                 │  │  BACKPROP ──► leaf to root              │    │
+                 │  │               visits++ / wins++         │    │
+                 │  │    │                                    │    │
+                 │  └────┴────────────────────────────────────┘    │
+                 │       └──────────── repeat until                │
+                 │                  time/cap reached               │
+                 └───────────────────────┬─────────────────────────┘
+                                         │
+                          ┌──────────────▼────────────────────┐
+                          │   Aggregate visits + wins         │
+                          │   across all cores                │
+                          └──────────────┬────────────────────┘
+                                         │
+                          ┌──────────────▼────────────────────┐
+                          │   LAYER 6: Anti-Self-Atari Guard  │
+                          │   Sort moves by visit count       │
+                          │   Top move is pure self-atari? ───┼──► reject, try next
+                          └──────────────┬────────────────────┘
+                                         │ safe move found
+                          ┌──────────────▼────────────────────┐
+                          │   Return best move + win rate     │
+                          └───────────────────────────────────┘
 
 ## Configuration
 

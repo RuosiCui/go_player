@@ -36,21 +36,26 @@ b) Interesting Design Decisions & Challenges:
   undo-snapshot creation and superko hashing respectively, since neither is
   needed inside rollouts. Rollout depth is capped at 50 moves.
 - Tactical Override System: Before invoking MCTS, the AI runs a layered series
-  of instant overrides: Opening Book (curated 3-3 and 3-4 star point openings),
-  Instant Capture (kills groups of 2+ stones immediately), Instant Escape
-  (saves own groups in atari if extending gains liberties), and Pass Override
+  of instant overrides: Opening Book (4 classic 3-3 star points only), Instant
+  Capture (kills groups of 2+ stones immediately), Instant Escape (saves own
+  groups larger than MIN_ESCAPE_GROUP_SIZE stones in atari, if extending gains
+  liberties — small groups are left to MCTS to evaluate), and Pass Override
   (ends the game when only self-destructive moves remain). These ensure the AI
   never misses critical tactical moments regardless of MCTS sampling variance.
-  The Pass Override uses _is_pure_self_atari(), which was refined to allow
-  forcing moves: a move that leaves our group at 1 liberty is no longer blocked
-  if it simultaneously reduces an opponent group to 1 liberty (atari), since
-  that is a tactical approach move, not a blunder.
+- Pure Self-Atari Detection: _is_pure_self_atari() is now strictly defined as
+  1 liberty + no capture, with no exceptions. A separate _is_forcing_move()
+  helper checks whether a move puts an adjacent opponent group in atari. Pass
+  Override uses both: it skips self-atari moves unless they are forcing moves,
+  so the AI never passes past capturable dead groups. The Anti-Self-Atari Guard
+  (Layer 6) uses only _is_pure_self_atari() — forcing moves are still rejected
+  there because the opponent moves next and recaptures before we benefit.
 - Anti-Self-Atari Guard: After MCTS selects its best move, a final safety check
   rejects any move that would place the AI's own group into atari without
-  capturing anything, preventing late-game blunders.
+  capturing anything, preventing blunders. Unlike Pass Override, no forcing move
+  exception applies here since the opponent always gets to respond first.
 - Edge Move Policy Priors: To discourage weak edge play without hard-banning it,
   1st-line and 2nd-line moves are assigned virtual visit counts when first
-  expanded (PRIOR_1ST_LINE_VISITS=6 wins=0, PRIOR_2ND_LINE_VISITS=4 wins=1).
+  expanded (PRIOR_1ST_LINE_VISITS=6 wins=0, PRIOR_2ND_LINE_VISITS=6 wins=1).
   This pre-biases UCB1 against edge moves so interior moves are explored first,
   while still allowing edge plays when statistically justified (e.g. forced
   captures). Completely isolated 1st-line moves with no adjacent stones are hard-
@@ -191,8 +196,13 @@ class GoAI:
     # Higher = stronger discouragement. Tune these if the AI over/under-plays edge moves.
     PRIOR_1ST_LINE_VISITS = 6   # virtual losses — 1st line rarely beats interior moves
     PRIOR_1ST_LINE_WINS   = 0
-    PRIOR_2ND_LINE_VISITS = 4   # moderate penalty — 2nd line strongly deprioritized
+    PRIOR_2ND_LINE_VISITS = 6   # moderate penalty — 2nd line strongly deprioritized
     PRIOR_2ND_LINE_WINS   = 1
+
+    # Instant Escape Override only triggers for groups larger than this.
+    # Small groups (1-2 stones) are often not worth saving — sacrificing them
+    # can be strategically correct. Raise to protect fewer groups.
+    MIN_ESCAPE_GROUP_SIZE = 10
 
     def __init__(self, time_limit=1.5, iteration_cap=200000):
         # Time limit serves as a stopwatch; iteration_cap serves as a goal tracker.
@@ -246,27 +256,34 @@ class GoAI:
         if len(libs) != 1 or caps_after != caps_before:
             return False
 
-        # Even with no capture, if this move puts any opponent group in atari
-        # it is a forcing move — not pure self-atari, so don't block it
+        return True
+
+    def _is_forcing_move(self, engine, r, c, player):
+        """Returns True if placing at (r,c) puts any adjacent opponent group in atari.
+        Used only in Pass Override so the AI doesn't pass past capturable dead groups."""
+        test_eng = GoEngine()
+        test_eng.size = engine.size
+        test_eng.board = [row[:] for row in engine.board]
+        test_eng.current_player = player
+        test_eng.history_set = set(engine.history_set)
+        test_eng.captures = dict(engine.captures)
+        test_eng.place_stone(r, c)
+
         opponent = 2 if player == 1 else 1
         for adj_r, adj_c in test_eng._get_adjacent(r, c):
             if test_eng.board[adj_r][adj_c] == opponent:
                 _, opp_libs = test_eng._get_group_and_liberties(test_eng.board, adj_r, adj_c)
                 if len(opp_libs) == 1:
-                    return False
-
-        return True
+                    return True
+        return False
 
     def get_best_move(self, engine):
         # Opening Book Heuristic: Play exclusively on the best 9x9 opening points
         empty_count = sum(row.count(0) for row in engine.board)
         if empty_count >= (engine.size * engine.size) - 1:
-            # The four (3,3) star points and their inner (3,4) & (4,3) variations
+            # The four classic 3-3 star points (hoshi)
             best_openings = [
-                (2, 2), (2, 3), (3, 2), # Top-Left cluster
-                (2, 6), (2, 5), (3, 6), # Top-Right cluster
-                (6, 2), (5, 2), (6, 3), # Bottom-Left cluster
-                (6, 6), (5, 6), (6, 5)  # Bottom-Right cluster
+                (2, 2), (2, 6), (6, 2), (6, 6)
             ]
             valid_openings = []
             
@@ -276,7 +293,7 @@ class GoAI:
                                 
             if valid_openings:
                 chosen = random.choice(valid_openings)
-                print(f"Opening Book triggered (13-Point Cluster). Chosen move: {chosen}")
+                print(f"Opening Book triggered (4 Star Points). Chosen move: {chosen}")
                 return chosen
 
         # Instant Capture Override: If there is a free kill, take it instantly and skip MCTS.
@@ -321,7 +338,7 @@ class GoAI:
                     grp, libs = engine._get_group_and_liberties(engine.board, r, c)
                     checked_groups.update(grp)
                     
-                    if len(libs) == 1:
+                    if len(libs) == 1 and len(grp) > GoAI.MIN_ESCAPE_GROUP_SIZE:
                         # We are in Atari! Gather the only escape coordinate.
                         lr, lc = list(libs)[0]
                         if engine.is_legal_move(lr, lc):
@@ -353,10 +370,15 @@ class GoAI:
             if self._is_true_eye(engine, r, c, engine.current_player):
                 continue
             if self._is_pure_self_atari(engine, r, c, engine.current_player):
+                # Self-atari, but if it puts an opponent group in atari it's a
+                # forcing move — don't pass, let MCTS evaluate the sequence
+                if self._is_forcing_move(engine, r, c, engine.current_player):
+                    all_moves_are_suicidal_or_eyes = False
+                    break
                 continue
             all_moves_are_suicidal_or_eyes = False
             break
-                
+
         if all_moves_are_suicidal_or_eyes:
             print("Pass Override! All remaining legal moves are self-destructive (eyes or self-ataris).")
             return None # Pass
