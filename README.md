@@ -77,8 +77,8 @@ The AI uses a multi-layered decision pipeline. Before each move, the following c
                           └──────┬──────────┬───────┘
                               Yes│          │No
                      ┌───────────▼──┐       │
-                     │ Return 3-3 / │       │
-                     │  3-4 point   │       │
+                     │ Return 3-3   │       │
+                     │  star point  │       │
                      └──────────────┘       │
                           ┌─────────────────▼────────────────┐
                           │     LAYER 2: Instant Capture     │
@@ -91,7 +91,7 @@ The AI uses a multi-layered decision pipeline. Before each move, the following c
                      └──────────────┘            │
                           ┌──────────────────────▼───────────┐
                           │     LAYER 3: Instant Escape      │
-                          │       Own group in atari?        │
+                          │  Own group in atari, size > 2?   │
                           └──────┬───────────────┬───────────┘
                               Yes│               │No
                 ┌────────────────▼────────────┐  │
@@ -104,7 +104,8 @@ The AI uses a multi-layered decision pipeline. Before each move, the following c
            └─────────────┘           │           │
                           ┌─────────▼────────────▼───────────┐
                           │      LAYER 4: Pass Override      │
-                          │  All moves true eyes/self-atari? │
+                          │ All moves eyes/self-atari and    │
+                          │      no forcing move left?       │
                           └──────┬───────────────┬───────────┘
                               Yes│               │No
                      ┌───────────▼──┐            │
