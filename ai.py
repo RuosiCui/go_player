@@ -79,25 +79,22 @@ def mcts_worker(args):
     
     board_size = len(snapshot['board'])
 
-    # Smart Edge Filter: always filter 1st-line moves that have no adjacent opponent stone.
-    # Isolated edge moves and "crawling" moves (adjacent only to own stones) are almost
-    # always weak. Tactical edge moves (adjacent to an opponent stone) are kept so MCTS
-    # can still approach, reduce, or capture opponent groups on the edge.
-    opponent = 2 if snapshot['current_player'] == 1 else 1
+    # Hard filter: remove completely isolated 1st-line moves (no adjacent stone of any color).
+    # All other edge moves stay in untried_moves but are discouraged via policy priors in expand().
     filtered_untried = []
     for move in root.untried_moves:
         if move is None:
             filtered_untried.append(move)
         else:
             r, c = move
-            is_edge = (r == 0 or r == board_size - 1 or c == 0 or c == board_size - 1)
-            if not is_edge:
+            is_1st_line = (r == 0 or r == board_size - 1 or c == 0 or c == board_size - 1)
+            if not is_1st_line:
                 filtered_untried.append(move)
             else:
                 adjacents = [(r+dr, c+dc) for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]
                              if 0 <= r+dr < board_size and 0 <= c+dc < board_size]
-                near_opponent = any(snapshot['board'][ar][ac] == opponent for ar, ac in adjacents)
-                if near_opponent:
+                has_any_neighbor = any(snapshot['board'][ar][ac] != 0 for ar, ac in adjacents)
+                if has_any_neighbor:
                     filtered_untried.append(move)
 
     if filtered_untried:
@@ -419,6 +416,21 @@ class GoAI:
             eng.place_stone(move[0], move[1])
             
         child = MCTSNode(eng._create_snapshot(), move=move, parent=node)
+
+        # Policy prior: pre-bias UCB1 against edge moves via virtual visits.
+        # 1st line → 6 virtual losses (strongly discouraged, rarely selected unless forced).
+        # 2nd line → 2 virtual visits, 1 virtual win (mild discouragement).
+        # Interior → no prior (visits=0, explored eagerly as normal).
+        if move is not None:
+            bs = len(node.snapshot['board'])
+            r, c = move
+            if r == 0 or r == bs - 1 or c == 0 or c == bs - 1:
+                child.visits = 6
+                child.wins = 0
+            elif r == 1 or r == bs - 2 or c == 1 or c == bs - 2:
+                child.visits = 2
+                child.wins = 1
+
         node.children.append(child)
         return child
 
