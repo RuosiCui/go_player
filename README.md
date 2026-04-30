@@ -63,8 +63,8 @@ The AI uses a multi-layered decision pipeline. Before each move, the following c
 1. **Opening Book** — On the very first move, randomly selects from curated 3-3 and 3-4 star point positions.
 2. **Instant Capture Override** — If an opponent group of 2+ stones has only 1 liberty, capture it immediately without running MCTS.
 3. **Instant Escape Override** — If one of the AI's own groups is in atari, attempt to extend it (only if extending gains more than 1 liberty, to avoid ladder traps).
-4. **Pass Override** — If all remaining legal moves are true eyes or pure self-ataris, pass instead of self-destructing.
-5. **MCTS with Root Parallelism** — Spawns independent MCTS trees across all available CPU cores. Each core runs UCB1-guided tree search with smart rollouts (true eye protection + atari capture heuristic). Results are aggregated by merging visit/win counts across all cores.
+4. **Pass Override** — If all remaining legal moves are true eyes or pure self-ataris, pass instead of self-destructing. A move that leaves the AI's own group at 1 liberty is still allowed if it simultaneously puts an opponent group in atari (forcing move, not a blunder).
+5. **MCTS with Root Parallelism** — Spawns independent MCTS trees across all available CPU cores. Each core runs UCB1-guided tree search with smart rollouts (true eye protection + atari capture heuristic). Results are aggregated by merging visit/win counts across all cores. Edge move policy priors (virtual visit counts) are injected on node creation to bias UCB1 against weak 1st- and 2nd-line plays without hard-banning them; completely isolated 1st-line moves are hard-filtered before search begins.
 6. **Anti-Self-Atari Guard** — After MCTS selects the best move, a final safety check rejects any move that would place the AI into atari without capturing anything.
 
 ## Configuration
