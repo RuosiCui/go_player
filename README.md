@@ -72,7 +72,7 @@ The AI uses a multi-layered decision pipeline. Before each move, the following c
 AI parameters are set in `gui.py` (line 14):
 
 ```python
-self.ai = GoAI(time_limit=5, iteration_cap=10000)
+self.ai = GoAI(time_limit=5, iteration_cap=30000)
 ```
 
 | Parameter | Description |
@@ -80,7 +80,7 @@ self.ai = GoAI(time_limit=5, iteration_cap=10000)
 | `time_limit` | Maximum seconds the AI is allowed to think per move. |
 | `iteration_cap` | Maximum total MCTS iterations across all cores. |
 
-The number of CPU cores used is auto-detected in `ai.py` (line 301):
+The number of CPU cores used is auto-detected in `ai.py` (line 366):
 
 ```python
 num_cores = max(1, min(16, multiprocessing.cpu_count() - 1))
