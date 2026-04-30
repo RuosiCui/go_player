@@ -41,9 +41,25 @@ b) Interesting Design Decisions & Challenges:
   (saves own groups in atari if extending gains liberties), and Pass Override
   (ends the game when only self-destructive moves remain). These ensure the AI
   never misses critical tactical moments regardless of MCTS sampling variance.
+  The Pass Override uses _is_pure_self_atari(), which was refined to allow
+  forcing moves: a move that leaves our group at 1 liberty is no longer blocked
+  if it simultaneously reduces an opponent group to 1 liberty (atari), since
+  that is a tactical approach move, not a blunder.
 - Anti-Self-Atari Guard: After MCTS selects its best move, a final safety check
   rejects any move that would place the AI's own group into atari without
   capturing anything, preventing late-game blunders.
+- Edge Move Policy Priors: To discourage weak edge play without hard-banning it,
+  1st-line and 2nd-line moves are assigned virtual visit counts when first
+  expanded (PRIOR_1ST_LINE_VISITS=6 wins=0, PRIOR_2ND_LINE_VISITS=4 wins=1).
+  This pre-biases UCB1 against edge moves so interior moves are explored first,
+  while still allowing edge plays when statistically justified (e.g. forced
+  captures). Completely isolated 1st-line moves with no adjacent stones are hard-
+  filtered before MCTS starts. The prior values are tunable class constants.
+- AI Pass Handling: When the AI has no useful move, it calls ai_skip_turn()
+  instead of pass_turn(), switching the current player without ending the game.
+  The game ends only when both sides pass consecutively (consecutive_passes >= 2),
+  preventing premature game-over and incorrect scoring from dead groups still on
+  the board.
 
 c) Testing Methodology Beyond Provided Suites:
 1. Positional Superko Verification: We manually forced classic repeating
@@ -450,7 +466,7 @@ class GoAI:
         eng.captures = dict(snapshot['captures'])
 
         depth = 0
-        max_depth = 40
+        max_depth = 50
 
         # Build empty set once and update incrementally instead of rebuilding each turn
         empty_set = {(r, c) for r in range(eng.size) for c in range(eng.size) if eng.board[r][c] == 0}
