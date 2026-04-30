@@ -78,22 +78,30 @@ def mcts_worker(args):
     root = MCTSNode(snapshot)
     
     board_size = len(snapshot['board'])
-    empty_count = sum(row.count(0) for row in snapshot['board'])
-    
-    # Early Game Edge Filter
-    if empty_count > (board_size * board_size) - 30:
-        filtered_untried = []
-        for move in root.untried_moves:
-            if move is None:
+
+    # Smart Edge Filter: always filter 1st-line moves that have no adjacent opponent stone.
+    # Isolated edge moves and "crawling" moves (adjacent only to own stones) are almost
+    # always weak. Tactical edge moves (adjacent to an opponent stone) are kept so MCTS
+    # can still approach, reduce, or capture opponent groups on the edge.
+    opponent = 2 if snapshot['current_player'] == 1 else 1
+    filtered_untried = []
+    for move in root.untried_moves:
+        if move is None:
+            filtered_untried.append(move)
+        else:
+            r, c = move
+            is_edge = (r == 0 or r == board_size - 1 or c == 0 or c == board_size - 1)
+            if not is_edge:
                 filtered_untried.append(move)
             else:
-                r, c = move
-                is_edge = (r == 0 or r == board_size - 1 or c == 0 or c == board_size - 1)
-                if not is_edge:
+                adjacents = [(r+dr, c+dc) for dr, dc in [(-1,0),(1,0),(0,-1),(0,1)]
+                             if 0 <= r+dr < board_size and 0 <= c+dc < board_size]
+                near_opponent = any(snapshot['board'][ar][ac] == opponent for ar, ac in adjacents)
+                if near_opponent:
                     filtered_untried.append(move)
-        
-        if filtered_untried:
-            root.untried_moves = filtered_untried
+
+    if filtered_untried:
+        root.untried_moves = filtered_untried
 
     start_time = time.time()
     iterations = 0
@@ -276,7 +284,7 @@ class GoAI:
                             max_capture_size = current_capture_size
                             best_capture_move = (r, c)
                             
-        if best_capture_move and max_capture_size >= 2:
+        if best_capture_move and max_capture_size >= 5:
             print(f"Instant Capture Override! Slaughtered {max_capture_size} stones at {best_capture_move}")
             return best_capture_move
 
@@ -423,7 +431,7 @@ class GoAI:
         eng.captures = dict(snapshot['captures'])
 
         depth = 0
-        max_depth = 50
+        max_depth = 40
 
         # Build empty set once and update incrementally instead of rebuilding each turn
         empty_set = {(r, c) for r in range(eng.size) for c in range(eng.size) if eng.board[r][c] == 0}
