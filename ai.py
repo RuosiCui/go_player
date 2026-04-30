@@ -175,7 +175,7 @@ class GoAI:
     # Higher = stronger discouragement. Tune these if the AI over/under-plays edge moves.
     PRIOR_1ST_LINE_VISITS = 6   # virtual losses — 1st line rarely beats interior moves
     PRIOR_1ST_LINE_WINS   = 0
-    PRIOR_2ND_LINE_VISITS = 2   # mild penalty — 2nd line competitive but deprioritized
+    PRIOR_2ND_LINE_VISITS = 4   # moderate penalty — 2nd line strongly deprioritized
     PRIOR_2ND_LINE_WINS   = 1
 
     def __init__(self, time_limit=1.5, iteration_cap=200000):
@@ -288,7 +288,7 @@ class GoAI:
                             max_capture_size = current_capture_size
                             best_capture_move = (r, c)
                             
-        if best_capture_move and max_capture_size >= 5:
+        if best_capture_move and max_capture_size >= 2:
             print(f"Instant Capture Override! Slaughtered {max_capture_size} stones at {best_capture_move}")
             return best_capture_move
 
