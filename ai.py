@@ -171,6 +171,13 @@ class MCTSNode:
 
 
 class GoAI:
+    # Policy prior virtual visits injected into expand() to discourage edge moves via UCB1.
+    # Higher = stronger discouragement. Tune these if the AI over/under-plays edge moves.
+    PRIOR_1ST_LINE_VISITS = 6   # virtual losses — 1st line rarely beats interior moves
+    PRIOR_1ST_LINE_WINS   = 0
+    PRIOR_2ND_LINE_VISITS = 2   # mild penalty — 2nd line competitive but deprioritized
+    PRIOR_2ND_LINE_WINS   = 1
+
     def __init__(self, time_limit=1.5, iteration_cap=200000):
         # Time limit serves as a stopwatch; iteration_cap serves as a goal tracker.
         self.time_limit = time_limit
@@ -425,11 +432,11 @@ class GoAI:
             bs = len(node.snapshot['board'])
             r, c = move
             if r == 0 or r == bs - 1 or c == 0 or c == bs - 1:
-                child.visits = 6
-                child.wins = 0
+                child.visits = GoAI.PRIOR_1ST_LINE_VISITS
+                child.wins   = GoAI.PRIOR_1ST_LINE_WINS
             elif r == 1 or r == bs - 2 or c == 1 or c == bs - 2:
-                child.visits = 2
-                child.wins = 1
+                child.visits = GoAI.PRIOR_2ND_LINE_VISITS
+                child.wins   = GoAI.PRIOR_2ND_LINE_WINS
 
         node.children.append(child)
         return child
